@@ -36,7 +36,12 @@ class LoanApplication(BaseModel): #Pydantic Model (Validation)
     cb_person_default_on_file: str
     cb_person_cred_hist_length: int
 
-
+@app.get('/health')
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "Credit Risk Prediction API",
+    }
 
 @app.post('/predict')
 def predict(data : LoanApplication):
