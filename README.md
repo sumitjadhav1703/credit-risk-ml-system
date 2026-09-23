@@ -48,7 +48,7 @@ This repository provides a complete credit-risk machine learning pipeline:
 1. **Data Cleaning & Preprocessing:** Handles missing values, deduplicates rows, filters unrealistic data points, and scales/encodes features safely via scikit-learn pipelines.
 2. **Class Imbalance & Model Training:** Implements an `XGBClassifier` with class weighting (`scale_pos_weight ≈ 3.63`) and optimizes hyperparameters using 5-fold Stratified K-Fold cross-validation.
 3. **Probability Calibration:** Applies 5-fold Sigmoid (Platt) calibration (`CalibratedClassifierCV`) to align raw model confidence with actual default rates.
-4. **Threshold Optimization:** Derives an optimal classification threshold (`0.6951976431239382`) using Precision-Recall F1 optimization to convert probabilities into binary decisions (`High Risk` vs. `Low Risk`).
+4. **Threshold Optimization:** Derives an optimal classification threshold (`0.5692402139789683`) using Precision-Recall F1 optimization on out-of-fold training predictions to convert probabilities into binary decisions (`High Risk` vs. `Low Risk`).
 5. **Model Interpretability:** Employs SHAP (`TreeExplainer`) for global feature importance and local instance-level predictions.
 6. **API & Interface Deployment:** Packages serialized artifacts (`credit_risk_model.pkl` and `best_threshold.pkl`) into a FastAPI application serving both REST API endpoints and a static frontend web underwriting dashboard (`Credit Ledger`).
 
@@ -57,7 +57,7 @@ This repository provides a complete credit-risk machine learning pipeline:
 ## Key Features
 
 * **Calibrated Credit Risk Scoring:** Computes true probability estimates of borrower default using Sigmoid calibration.
-* **Optimized Decision Cutoff:** Uses a custom Precision-Recall optimized threshold (`~0.6952`) stored independently from the calibrated model artifact.
+* **Optimized Decision Cutoff:** Uses a custom Precision-Recall optimized threshold (`~0.5692`) stored independently from the calibrated model artifact.
 * **SHAP Interpretability:** Evaluates global feature importance and local instance-level waterfall plots via SHAP `TreeExplainer`.
 * **Automated Data Pipeline:** Employs `ColumnTransformer` with median imputation for numerical features and constant imputation with One-Hot Encoding for categorical features.
 * **Class Imbalance Handling:** Adjusts minority class loss weighting based on training class proportions.
@@ -78,7 +78,7 @@ flowchart TD
         C --> D[ColumnTransformer Preprocessing\nMedian Impute + One-Hot Encoding]
         D --> E[Hyperparameter Tuning\nRandomizedSearchCV on XGBoost]
         E --> F[Probability Calibration\nCalibratedClassifierCV Sigmoid cv=5]
-        F --> G[Threshold Selection\nPR-Curve F1 Maximization ~0.6952]
+        F --> G[Threshold Selection\nPR-Curve F1 Maximization ~0.5692]
     end
 
     F --> H[(credit_risk_model.pkl)]
@@ -125,7 +125,7 @@ The machine learning pipeline implemented in `Credit_Risk.ipynb` follows these s
 7. **Cross-Validation & Model Selection:** Evaluates baseline Logistic Regression vs. XGBoost using 5-Fold Stratified K-Fold CV.
 8. **Hyperparameter Tuning:** Runs `RandomizedSearchCV` (150 iterations, 5-fold CV) optimizing Average Precision (PR-AUC).
 9. **Probability Calibration:** Wraps the tuned estimator in `CalibratedClassifierCV(method="sigmoid", cv=5)` to output well-calibrated probabilities.
-10. **Threshold Tuning:** Computes Precision-Recall curve metrics on test set probabilities to identify the optimal F1 threshold (`0.6951976431239382`).
+10. **Threshold Tuning:** Computes out-of-fold calibrated probabilities on the training set (`cross_val_predict`) and picks the F1-maximising threshold on their Precision-Recall curve (`0.5692402139789683`). The test set is not used to choose it.
 11. **SHAP Interpretation:** Computes TreeExplainer SHAP values on transformed test features for global feature ranking and local prediction decomposition.
 12. **Model Serialization:** Exports `credit_risk_model.pkl` and `best_threshold.pkl`.
 
@@ -168,13 +168,13 @@ The following optimal hyperparameters were discovered via `RandomizedSearchCV` (
 
 ```python
 {
-    "classifier__n_estimators": 366,
-    "classifier__max_depth": 5,
-    "classifier__learning_rate": 0.1316690691287814,
-    "classifier__subsample": 0.845303589935636,
-    "classifier__colsample_bytree": 0.9374256499933686,
-    "classifier__min_child_weight": 7,
-    "classifier__gamma": 2.391359792655321
+    "classifier__n_estimators": 435,
+    "classifier__max_depth": 6,
+    "classifier__learning_rate": 0.0627471299151353,
+    "classifier__subsample": 0.9533121035675474,
+    "classifier__colsample_bytree": 0.8497416192535173,
+    "classifier__min_child_weight": 4,
+    "classifier__gamma": 1.47816842918857
 }
 ```
 
@@ -215,8 +215,8 @@ Probability prediction and binary classification are decoupled in this system:
 2. The decision threshold evaluates whether P(default = 1 | X) >= threshold.
 
 ### Verified Threshold Value
-* **Threshold Value:** `0.6951976431239382`
-* **Selection Strategy:** Precision-Recall curve F1-score maximization evaluated on test probabilities in `Credit_Risk.ipynb`.
+* **Threshold Value:** `0.5692402139789683`
+* **Selection Strategy:** Precision-Recall curve F1-score maximization over out-of-fold predictions of the calibrated model on the training set (section 13.1 of `Credit_Risk.ipynb`), so the test set stays an independent estimate.
 * **Artifact:** Saved separately as `best_threshold.pkl`.
 
 ### Runtime Decision Logic
@@ -254,21 +254,23 @@ Models were evaluated on a holdout test set of **6,305 samples** (20% stratified
 | **Data Split / Scope** | Holdout Test (6,305 samples) | Holdout Test (6,305 samples) | 5-Fold Stratified K-Fold CV |
 | **Optimization Metric** | Balanced Class Weights | Default 0.5 Cutoff | Average Precision (PR-AUC) |
 | **Accuracy** | 0.82 | **0.92** | — |
-| **Precision (Class 1)** | 0.56 | **0.81** | — |
+| **Precision (Class 1)** | 0.56 | **0.83** | — |
 | **Recall (Class 1)** | 0.79 | **0.81** | — |
-| **F1 Score (Class 1)** | 0.65 | **0.81** | — |
+| **F1 Score (Class 1)** | 0.65 | **0.82** | — |
 | **PR-AUC / Avg Precision** | — | — | **0.90** |
+
+At the deployed operating point — the calibrated model with the threshold above — the test set gives accuracy **0.94**, class-1 precision **0.93**, recall **0.75**, F1 **0.84** (section 13.1 of the notebook).
 
 ### Test Set Classification Report (Tuned XGBoost)
 
 ```text
               precision    recall  f1-score   support
 
-    Class 0       0.95      0.95      0.95      4943
-    Class 1       0.81      0.81      0.81      1362
+    Class 0       0.95      0.96      0.95      4943
+    Class 1       0.83      0.81      0.82      1362
 
    accuracy                           0.92      6305
-  macro avg       0.88      0.88      0.88      6305
+  macro avg       0.89      0.88      0.89      6305
 weighted avg       0.92      0.92      0.92      6305
 ```
 
@@ -278,7 +280,7 @@ weighted avg       0.92      0.92      0.92      6305
 
 * **Dataset Scope:** Derived from a synthetic or public credit dataset (`credit_risk_dataset.csv`) without longitudinal macro-economic factors.
 * **Distribution Shift:** Features such as interest rates or income ranges may shift over time, requiring periodic re-calibration and re-training.
-* **Threshold Sensitivity:** The decision threshold (`~0.6952`) was optimized on test set Precision-Recall metrics within the notebook. In live production environments, thresholds should be set according to specific institutional risk tolerances and cost matrices.
+* **Threshold Sensitivity:** The decision threshold (`~0.5692`) is F1-optimal on out-of-fold training predictions; F1 weights a missed default and a wrongly refused loan equally. In live production environments, thresholds should be set according to specific institutional risk tolerances and cost matrices.
 * **Missing Value Handling:** Missing values are imputed using median values (`person_emp_length`, `loan_int_rate`); abrupt changes in missingness patterns could impact accuracy.
 * **Demonstration Notice:** This system is an engineering demonstration and is not certified for real-world automated credit underwriting without regulatory auditing, fair lending compliance checks, and real-time model monitoring.
 
@@ -326,9 +328,9 @@ POST /predict
 **Response (200 OK):**
 ```json
 {
-  "default_probability": 0.08412034170321289,
+  "default_probability": 0.0182193563880958,
   "default_prediction": 0,
-  "threshold": 0.6951976431239382,
+  "threshold": 0.5692402139789683,
   "Result": "Low Risk"
 }
 ```
